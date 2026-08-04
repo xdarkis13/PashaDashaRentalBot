@@ -64,6 +64,8 @@ def fetch(url):
             if r.status_code == 200:
                 return r.text
             log(f"  [{r.status_code}] {url}")
+            if r.status_code == 404:
+                return None          # 404 не лечится ретраем — сразу пробуем след. вариант
         except requests.RequestException as e:
             log(f"  retry {attempt+1}: {e}")
         time.sleep(3)
@@ -107,9 +109,10 @@ def extract_json_blob(html_text, marker_id="__NEXT_DATA__"):
 
 # ------------------------------------------------------------------ Otodom
 
-def otodom_url(district):
-    rooms = ["TWO", "THREE", "FOUR", "SIX_OR_MORE"] if config.ROOMS_MIN <= 2 \
-        else ["THREE", "FOUR", "SIX_OR_MORE"]
+def otodom_candidate_urls():
+    # 2+ комнаты; client-side passes() всё равно перепроверит rooms>=ROOMS_MIN
+    rooms = ["TWO", "THREE", "FOUR", "FIVE", "SIX_OR_MORE"] if config.ROOMS_MIN <= 2 \
+        else ["THREE", "FOUR", "FIVE", "SIX_OR_MORE"]
     params = {
         "priceMax": config.PRICE_MAX,
         "areaMin": config.AREA_MIN,
@@ -121,8 +124,14 @@ def otodom_url(district):
     if config.OWNERS_ONLY:
         params["ownerTypeSingleSelect"] = "PRIVATE"
     q = urllib.parse.urlencode(params, safe="[],")
-    return (f"{OTODOM_BASE}/pl/wyniki/wynajem/mieszkanie/"
-            f"mazowieckie/warszawa/warszawa/{district}?{q}")
+    # Город одним запросом; район отсекаем на своей стороне (district_ok).
+    # Несколько форматов пути — берём первый, что ответит 200.
+    paths = [
+        "/pl/oferty/wynajem/mieszkanie/warszawa",
+        "/pl/wyniki/wynajem/mieszkanie/mazowieckie/warszawa/warszawa",
+        "/pl/oferty/wynajem/mieszkanie/mazowieckie/warszawa/warszawa",
+    ]
+    return [f"{OTODOM_BASE}{p}?{q}" for p in paths]
 
 
 def _num(x):
@@ -142,23 +151,28 @@ def _num(x):
 
 def parse_otodom():
     listings = []
-    for district in config.OTODOM_DISTRICTS:
-        url = otodom_url(district)
-        log(f"Otodom: {district}")
-        page = fetch(url)
+    page = used = None
+    for url in otodom_candidate_urls():
+        log(f"Otodom пробую: {url.split('?')[0]}")
+        p = fetch(url)
         time.sleep(config.REQUEST_DELAY)
-        if not page:
-            continue
-        data = extract_json_blob(page)
-        if not data:
-            log("  __NEXT_DATA__ не найден — вёрстка Otodom изменилась")
-            continue
-        items = deep_find_list(
-            data,
-            lambda d: ("id" in d or "slug" in d) and
-                      any(k in d for k in ("totalPrice", "price", "rentPrice")),
-        )
-        for it in items[:config.MAX_ITEMS_PER_PAGE]:
+        if p:
+            page, used = p, url
+            break
+    if not page:
+        log("  Otodom: ни один вариант URL не ответил 200")
+        return []
+    data = extract_json_blob(page)
+    if not data:
+        log("  Otodom: __NEXT_DATA__ не найден — вёрстка изменилась")
+        return []
+    items = deep_find_list(
+        data,
+        lambda d: ("id" in d or "slug" in d) and
+                  any(k in d for k in ("totalPrice", "price", "rentPrice")),
+    )
+    log(f"  Otodom: сработал {used.split('?')[0]} — карточек в JSON: {len(items)}")
+    for it in items[:config.MAX_ITEMS_PER_PAGE]:
             slug = it.get("slug")
             oid = it.get("id")
             if not slug and not oid:
@@ -270,7 +284,24 @@ def parse_olx():
 
 # ------------------------------------------------------------------ filter
 
+_PL_MAP = str.maketrans("ąćęłńóśźż", "acelnoszz")
+
+
+def _norm(s):
+    return (s or "").lower().translate(_PL_MAP)
+
+
+def district_ok(location):
+    targets = getattr(config, "TARGET_DISTRICTS", [])
+    if not targets:
+        return True
+    loc = _norm(location)
+    return any(_norm(d) in loc for d in targets)
+
+
 def passes(l):
+    if not district_ok(l["location"]):
+        return False
     if config.OWNERS_ONLY and not l["is_private"]:
         return False
     if l["price"] is not None and l["price"] > config.PRICE_MAX:
