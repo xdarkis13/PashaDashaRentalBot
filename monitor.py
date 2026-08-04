@@ -172,6 +172,10 @@ def parse_otodom():
                   any(k in d for k in ("totalPrice", "price", "rentPrice")),
     )
     log(f"  Otodom: сработал {used.split('?')[0]} — карточек в JSON: {len(items)}")
+    if items:
+        log("  [debug] ключи 1-й карточки Otodom: " + ", ".join(list(items[0].keys())))
+        log("  [debug] 1-я карточка Otodom (обрезано): "
+            + json.dumps(items[0], ensure_ascii=False)[:1400])
     for it in items[:config.MAX_ITEMS_PER_PAGE]:
             slug = it.get("slug")
             oid = it.get("id")
@@ -372,6 +376,31 @@ def main():
         log(f"OLX упал: {e}")
 
     log(f"Всего собрано карточек: {len(all_listings)}")
+
+    # --- временная диагностика отсева (убрать после отладки) ---
+    from collections import Counter
+    tally = Counter()
+    for l in all_listings:
+        if l["id"] in seen:
+            tally["уже видели"] += 1
+        elif not district_ok(l["location"]):
+            tally[f"район не совпал [{l['source']}]"] += 1
+        elif config.OWNERS_ONLY and not l["is_private"]:
+            tally[f"агентство [{l['source']}]"] += 1
+        elif l["price"] is not None and l["price"] > config.PRICE_MAX:
+            tally["цена выше"] += 1
+        elif l["area"] is not None and l["area"] < config.AREA_MIN:
+            tally["площадь меньше"] += 1
+        elif l["rooms"] is not None and l["rooms"] < config.ROOMS_MIN:
+            tally["мало комнат"] += 1
+        else:
+            tally[f"ПРОШЛО [{l['source']}]"] += 1
+    log("Диагностика отсева: " + repr(dict(tally)))
+    otd = [l for l in all_listings if l["source"] == "Otodom"]
+    for l in otd[:3]:
+        log(f"  [debug Otodom] loc={l['location']!r} price={l['price']} "
+            f"area={l['area']} rooms={l['rooms']} private={l['is_private']}")
+    # --- конец диагностики ---
 
     fresh = [l for l in all_listings if l["id"] not in seen and passes(l)]
     log(f"Новых подходящих: {len(fresh)}")
