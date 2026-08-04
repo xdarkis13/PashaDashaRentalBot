@@ -3,18 +3,23 @@ import json, re, urllib.parse
 import monitor, config
 
 # ---- 1. deep_find_list ----
+def _loc(district):
+    return {"address": {"street": {"name": "ul. Test"}, "city": {"name": "Warszawa"}},
+            "reverseGeocoding": {"locations": [
+                {"name": district, "locationLevel": "district",
+                 "fullName": f"{district}, Warszawa, mazowieckie"}]}}
+
 mock_next = {
     "props": {"pageProps": {"data": {"searchAds": {"items": [
         {"id": 101, "slug": "ladne-2-pok-wola-ID101", "title": "2 pok Wola",
-         "totalPrice": {"value": 5200}, "areaInSquareMeters": 55, "roomsNumber": 2,
-         "locationLabel": {"value": "Wola, Warszawa"}, "ownerType": "private", "agency": None},
+         "totalPrice": {"value": 5200}, "areaInSquareMeters": 55, "roomsNumber": "TWO",
+         "isPrivateOwner": True, "location": _loc("Wola")},
         {"id": 102, "slug": "3-pok-srodmiescie-ID102", "title": "3 pok Śródmieście",
-         "totalPrice": {"value": 8000}, "areaInSquareMeters": 70, "roomsNumber": 3,
-         "locationLabel": {"value": "Śródmieście"}, "ownerType": "agency",
-         "agency": {"name": "SuperNieruchomości"}},
+         "totalPrice": {"value": 8000}, "areaInSquareMeters": 70, "roomsNumber": "THREE",
+         "isPrivateOwner": False, "location": _loc("Śródmieście")},
         {"id": 103, "slug": "kawalerka-ID103", "title": "Kawalerka",
-         "totalPrice": {"value": 3000}, "areaInSquareMeters": 28, "roomsNumber": 1,
-         "locationLabel": {"value": "Wola"}, "ownerType": "private", "agency": None},
+         "totalPrice": {"value": 3000}, "areaInSquareMeters": 28, "roomsNumber": "ONE",
+         "isPrivateOwner": True, "location": _loc("Wola")},
     ]}}}}
 }
 found = monitor.deep_find_list(

@@ -149,6 +149,13 @@ def _num(x):
         return None
 
 
+_ROOMS_MAP = {
+    "ONE": 1, "TWO": 2, "THREE": 3, "FOUR": 4, "FIVE": 5,
+    "SIX": 6, "SIX_OR_MORE": 6, "SEVEN": 7, "EIGHT": 8,
+    "NINE": 9, "TEN": 10, "TEN_OR_MORE": 10, "MORE": 10,
+}
+
+
 def parse_otodom():
     listings = []
     page = used = None
@@ -185,14 +192,28 @@ def parse_otodom():
                          if isinstance(it.get("totalPrice"), dict)
                          else it.get("totalPrice") or it.get("price"))
             area = _num(it.get("areaInSquareMeters") or it.get("area"))
-            rooms = _num(it.get("roomsNumber") or it.get("rooms"))
-            loc = it.get("locationLabel") or it.get("location") or {}
-            if isinstance(loc, dict):
-                loc = loc.get("address") or loc.get("value") or json.dumps(loc, ensure_ascii=False)
-            agency = None
-            if isinstance(it.get("agency"), dict):
-                agency = it["agency"].get("name")
-            owner_type = it.get("ownerType") or ("agency" if agency else None)
+
+            # roomsNumber у Otodom — строка-enum (ONE/TWO/THREE/...)
+            rn = it.get("roomsNumber")
+            rooms = _ROOMS_MAP.get(rn) if isinstance(rn, str) else _num(rn)
+
+            # Район лежит в location.reverseGeocoding, уровень "district".
+            locobj = it.get("location") or {}
+            rg = (locobj.get("reverseGeocoding") or {}).get("locations") or []
+            district_full = ""
+            for e in rg:
+                if e.get("locationLevel") == "district":
+                    district_full = e.get("fullName") or e.get("name") or ""
+                    break
+            if not district_full:
+                district_full = ", ".join(e.get("name", "") for e in rg if e.get("name"))
+            addr = locobj.get("address") or {}
+            street = ((addr.get("street") or {}).get("name")) or ""
+            location = (street + ", " + district_full).strip(", ") if street else district_full
+
+            # готовый булев флаг собственника
+            is_private = bool(it.get("isPrivateOwner"))
+
             listings.append({
                 "id": f"otodom:{oid or slug}",
                 "source": "Otodom",
@@ -200,8 +221,8 @@ def parse_otodom():
                 "price": price,
                 "area": area,
                 "rooms": rooms,
-                "location": str(loc),
-                "is_private": (owner_type != "agency" and agency is None),
+                "location": location or "Warszawa",
+                "is_private": is_private,
                 "url": f"{OTODOM_BASE}/pl/oferta/{slug}" if slug
                        else f"{OTODOM_BASE}/pl/oferta/{oid}",
             })
